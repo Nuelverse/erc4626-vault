@@ -29,6 +29,12 @@ interface IVault {
     /// @notice The asset address given at construction is not valid (the zero address).
     error InvalidAsset();
 
+    /// @notice Thrown when the address passed is a zero address
+    error ZeroAddress();
+
+    /// @notice Thrown when ownership is trying to be renounced
+    error OwnershipRenounceDisabled();
+
     // ---------------------------------------------------------------------
     // Events
     // ---------------------------------------------------------------------
