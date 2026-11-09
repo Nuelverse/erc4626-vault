@@ -97,12 +97,12 @@ contract VaultTest is Test {
 
     function test_deposit_firstDeposit() external {
         vm.expectEmit(true, true, false, true);
-        emit Deposit(ALICE, ALICE, 1_000e6, 1_000e6);
+        emit Deposit(ALICE, ALICE, 1_000e6, 999_999_000);
 
         vm.prank(ALICE);
         uint256 shares = vault.deposit(1_000e6, ALICE);
 
-        assertEq(shares, 1_000e6);
+        assertEq(shares, 999_999_000);
         assertEq(mockERC20.balanceOf(address(vault)), 1_000e6);
         assertEq(vault.totalSupply(), 1_000e6);
         assertEq(mockERC20.balanceOf(ALICE), 9_000e6);
@@ -113,7 +113,7 @@ contract VaultTest is Test {
         vm.prank(ALICE);
         uint256 shares = vault.deposit(5_00e6, BOB);
 
-        assertEq(shares, 5_00e6);
+        assertEq(shares, 499_999_000);
         assertEq(vault.balanceOf(BOB), shares);
         assertEq(vault.balanceOf(ALICE), 0);
         assertEq(mockERC20.balanceOf(ALICE), 9_500e6);
@@ -196,14 +196,14 @@ contract VaultTest is Test {
         vault.deposit(1_000e6, ALICE);
 
         vm.expectEmit(true, true, true, true);
-        emit Withdraw(ALICE, ALICE, ALICE, 1_000e6, 1_000e6);
-        uint256 assets = vault.redeem(1_000e6, ALICE, ALICE);
+        emit Withdraw(ALICE, ALICE, ALICE, 999_999_000, 999_999_000);
+        uint256 assets = vault.redeem(999_999_000, ALICE, ALICE);
         vm.stopPrank();
 
-        assertEq(assets, 1_000e6);
-        assertEq(vault.totalSupply(), 0);
-        assertEq(mockERC20.balanceOf(address(vault)), 0);
-        assertEq(mockERC20.balanceOf(ALICE), 10_000e6);
+        assertEq(assets, 999_999_000);
+        assertEq(vault.totalSupply(), 1_000);
+        assertEq(mockERC20.balanceOf(address(vault)), 1000);
+        assertEq(mockERC20.balanceOf(ALICE), 9_999_999_000);
     }
 
     function test_redeem_afterYield() external {
@@ -215,7 +215,7 @@ contract VaultTest is Test {
         uint256 assets = vault.redeem(400e6, ALICE, ALICE);
         assertEq(assets, 800e6);
         assertEq(mockERC20.balanceOf(ALICE), 9_800e6);
-        assertEq(vault.balanceOf(ALICE), 600e6);
+        assertEq(vault.balanceOf(ALICE), 599_999_000);
     }
 
     function test_redeem_forOwnerWithAllowance() external {
@@ -330,8 +330,8 @@ contract VaultTest is Test {
         vault.setDepositCap(500e6);
 
         vm.prank(ALICE);
-        uint256 assets = vault.redeem(1_000e6, ALICE, ALICE);
-        assertEq(assets, 1_000e6);
+        uint256 assets = vault.redeem(999_999_000, ALICE, ALICE);
+        assertEq(assets, 999_999_000);
     }
 
     /////// Admin Controls Test ////////
@@ -359,7 +359,7 @@ contract VaultTest is Test {
 
         vm.prank(ALICE);
         uint256 shares = vault.deposit(1_000e6, ALICE);
-        assertEq(shares, 1_000e6);
+        assertEq(shares, 999_999_000);
     }
 
     function test_setDepositCap_revertsForNonOwner() external {
@@ -421,13 +421,13 @@ contract VaultTest is Test {
 
     function test_deposit_feeOnTransfer_firstDeposit() external {
         vm.expectEmit(true, true, false, true);
-        emit Deposit(ALICE, ALICE, 900e6, 900e6);
+        emit Deposit(ALICE, ALICE, 900e6, 899_999_000);
 
         vm.prank(ALICE);
         uint256 shares = feeVault.deposit(1_000e6, ALICE);
 
-        assertEq(shares, 900e6);
-        assertEq(feeVault.balanceOf(ALICE), 900e6);
+        assertEq(shares, 899_999_000);
+        assertEq(feeVault.balanceOf(ALICE), 899_999_000);
         assertEq(feeToken.balanceOf(address(feeVault)), 900e6);
         assertEq(feeToken.balanceOf(ALICE), 9_000e6);
     }
@@ -447,12 +447,12 @@ contract VaultTest is Test {
     function test_redeem_feeOnTransfer_cannotTakeMoreThanVaultHolds() external {
         vm.startPrank(ALICE);
         feeVault.deposit(1_000e6, ALICE);
-        uint256 assets = feeVault.redeem(900e6, ALICE, ALICE);
+        uint256 assets = feeVault.redeem(899_999_000, ALICE, ALICE);
         vm.stopPrank();
 
-        assertEq(assets, 900e6);
-        assertEq(feeToken.balanceOf(address(feeVault)), 0);
-        assertEq(feeToken.balanceOf(ALICE), 9_810e6);
-        assertEq(feeVault.totalSupply(), 0);
+        assertEq(assets, 899_999_000);
+        assertEq(feeToken.balanceOf(address(feeVault)), 1000);
+        assertEq(feeToken.balanceOf(ALICE), 9_809_999_100);
+        assertEq(feeVault.totalSupply(), 1000);
     }
 }

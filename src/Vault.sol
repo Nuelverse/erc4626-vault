@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
 
 pragma solidity 0.8.28;
 
@@ -17,9 +17,18 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 /// @dev Not audited. Share price is `totalAssets / totalSupply` where `totalAssets` is the vault's real token
 /// balance, so tokens sent directly to the vault raise the price of every share. Both conversions round down in
 /// the vault's favour. The owner can pause deposits, set the deposit cap and transfer ownership (two steps); the
-/// owner has no function that moves, freezes or redirects user funds, and `redeem` is never blocked.
+/// owner has no function that moves, freezes or redirects user funds, and `redeem` is never blocked. The very first
+/// deposit locks {MINIMUM_LIQUIDITY} shares at {DEAD_ADDRESS} forever, so the share supply can never fall back to a
+/// tiny number; this is the defense against the first-depositor / donation inflation attack.
 contract Vault is IVault, ERC20, ReentrancyGuard, Pausable, Ownable2Step {
     using SafeERC20 for IERC20;
+
+    /// @dev Shares locked at {DEAD_ADDRESS} by the first deposit. They count in `totalSupply` but nobody can redeem
+    /// them, so a small amount of assets always stays in the vault.
+    uint256 constant MINIMUM_LIQUIDITY = 1000;
+
+    /// @dev Address that receives the locked shares. It has no known key and no code, so they can never move.
+    address constant DEAD_ADDRESS = address(0xdead);
 
     /// @dev The pooled token. Immutable: it can never be changed, not even by the owner.
     IERC20 immutable i_asset;
@@ -57,7 +66,10 @@ contract Vault is IVault, ERC20, ReentrancyGuard, Pausable, Ownable2Step {
     /// @inheritdoc IVault
     /// @dev Measures the balance before and after the transfer and prices shares from the amount actually
     /// received. The transfer-in happens before the share maths (a deliberate exception to strict CEI), which is
-    /// why the function is `nonReentrant`. Shares are priced from the balance before the deposit.
+    /// why the function is `nonReentrant`. Shares are priced from the balance before the deposit. On the first
+    /// deposit (`totalSupply() == 0`) the price is 1:1, {MINIMUM_LIQUIDITY} shares are minted to {DEAD_ADDRESS},
+    /// and the receiver gets the rest; a first deposit of {MINIMUM_LIQUIDITY} or fewer base units reverts with
+    /// {ZeroShares}. The deposit cap is checked against the amount actually received.
     function deposit(uint256 assets, address receiver)
         public
         nonReentrant
@@ -76,7 +88,18 @@ contract Vault is IVault, ERC20, ReentrancyGuard, Pausable, Ownable2Step {
         if (amountReceived > capLeft) {
             revert DepositCapExceeded(amountReceived, capLeft);
         }
-        sharesMinted = VaultMath.assetsToShares(amountReceived, vaultBalanceBefore, totalSupply());
+
+        if (totalSupply() == 0) {
+            if (amountReceived <= MINIMUM_LIQUIDITY) {
+                revert ZeroShares(amountReceived);
+            }
+            sharesMinted =
+                VaultMath.assetsToShares(amountReceived, vaultBalanceBefore, totalSupply()) - MINIMUM_LIQUIDITY;
+            _mint(DEAD_ADDRESS, MINIMUM_LIQUIDITY);
+        } else {
+            sharesMinted = VaultMath.assetsToShares(amountReceived, vaultBalanceBefore, totalSupply());
+        }
+
         if (sharesMinted == 0) {
             revert ZeroShares(amountReceived);
         }

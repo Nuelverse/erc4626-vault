@@ -14,6 +14,8 @@ interface IVault {
     // ---------------------------------------------------------------------
 
     /// @notice A deposit would mint zero shares, so it is rejected instead of taking the caller's assets for nothing.
+    /// @dev On the very first deposit this also covers amounts that do not exceed the 1,000 shares locked forever,
+    /// since nothing would be left for the receiver.
     /// @param assets The amount of assets the caller tried to deposit.
     error ZeroShares(uint256 assets);
 
@@ -68,6 +70,8 @@ interface IVault {
     /// @notice Deposit assets and mint shares to `receiver`.
     /// @dev The caller pays. Shares are computed from the amount the vault actually received, not from `assets`,
     /// and rounded down. Reverts if the vault is paused, the cap would be exceeded, or zero shares would be minted.
+    /// On the very first deposit, 1,000 shares are locked at a dead address and the receiver gets 1,000 fewer shares
+    /// than the 1:1 price (inflation-attack defense).
     /// @param assets The amount of assets to deposit, in asset base units.
     /// @param receiver The address that receives the shares.
     /// @return sharesMinted The amount of shares minted to `receiver`.
@@ -96,6 +100,8 @@ interface IVault {
     function totalAssets() external view returns (uint256);
 
     /// @notice How many shares `assets` would buy at the current share price, rounded down.
+    /// @dev On an empty vault this returns `assets` (1:1), but the first `deposit` mints 1,000 fewer shares to the
+    /// receiver because they are locked.
     /// @param assets The amount of assets, in asset base units.
     /// @return The equivalent amount of shares.
     function convertToShares(uint256 assets) external view returns (uint256);
