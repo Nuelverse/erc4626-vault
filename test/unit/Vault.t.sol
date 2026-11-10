@@ -455,4 +455,15 @@ contract VaultTest is Test {
         assertEq(feeToken.balanceOf(ALICE), 9_809_999_100);
         assertEq(feeVault.totalSupply(), 1000);
     }
+
+    function test_deposit_feeOnTransfer_capUsesAmountReceived() external {
+        vm.prank(OWNER);
+        feeVault.setDepositCap(900e6);
+
+        vm.prank(ALICE);
+        uint256 shares = feeVault.deposit(1_000e6, ALICE);
+
+        assertEq(shares, 899_999_000);
+        assertEq(feeToken.balanceOf(address(feeVault)), 900e6);
+    }
 }

@@ -1,12 +1,10 @@
 # erc4626-vault
 
+[![CI](https://github.com/Nuelverse/erc4626-vault/actions/workflows/test.yml/badge.svg)](https://github.com/Nuelverse/erc4626-vault/actions/workflows/test.yml)
+
 A multi-file, ERC-4626-style token vault built with Foundry. Depositors pool one ERC-20 (the asset) and receive shares; the share price rises when yield is sent to the vault.
 
-> **Not audited.** This is a learning project written as if it were going to production. Do not use it with real funds.
-
-## Status
-
-Work in progress (Week 3 of a one-project-per-week series). The contracts, the unit tests and the inflation-attack test are done. Still to do: fuzz and invariant tests at the vault level, a reentrancy test with a malicious token, the deploy script and CI. See [Tests](#tests) for exactly what is and is not covered.
+> **Not audited.** This is a learning project.
 
 ## Layout
 
@@ -16,9 +14,14 @@ src/
   libraries/VaultMath.sol   pure share/asset conversions with explicit rounding
   Vault.sol                 state, deposit, redeem, admin controls
 test/
-  unit/                     VaultMath and Vault unit tests
+  unit/                     VaultMath and Vault unit tests, reentrancy tests
+  fuzz/                     fuzz tests on the real vault
+  invariant/                invariant tests with a handler contract
   attack/                   the inflation-attack tests
-  mocks/                    MockERC20, MockFeeToken (takes a 10% fee on every transfer)
+  mocks/                    MockERC20, MockFeeToken (10% fee on every transfer), MockReentrantToken (calls back into the vault)
+script/
+  DeployVault.s.sol         deploys the vault
+  HelperConfig.s.sol        picks the asset for the chain (test USDC on Sepolia, a mock on a local Anvil chain)
 ```
 
 ## How to run
@@ -31,39 +34,17 @@ forge test
 forge fmt --check
 ```
 
-Solidity 0.8.28 (pinned in `foundry.toml`), OpenZeppelin Contracts v5.7.0.
+## Deployed on Sepolia
+
+|                    |                                                                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vault              | [`0x26Af3252E6619Fb6730524dc8DbCEe42c5DCa75F`](https://sepolia.etherscan.io/address/0x26af3252e6619fb6730524dc8dbcee42c5dca75f#code) (source verified on Etherscan) |
+| Asset              | Circle's test USDC, `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (6 decimals)                                                                                       |
+| Deploy transaction | `0xfa0924aeec2175693d5b1507f925075479d73949e3551721251ba2e8c4fc6853`                                                                                                |
+| Owner              | `0x3a7471C5B78A5ba3958Be906bacb40492a5d2200` (a single key, the same one that deployed it)                                                                          |
+| Deposit cap        | 100,000 USDC                                                                                                                                                        |
 
 ## Design
-
-### What each file does
-
-| File | Job |
-|---|---|
-| `src/interfaces/IVault.sol` | The public surface: function signatures, events and custom errors. |
-| `src/libraries/VaultMath.sol` | Pure share/asset conversions with an explicit rounding direction. No state. |
-| `src/Vault.sol` | State, `deposit`, `redeem` and the admin controls. |
-
-### State
-
-| Variable | Meaning | Who can change it |
-|---|---|---|
-| `asset` | The ERC-20 being pooled | Nobody. It is `immutable`, set in the constructor. |
-| `depositCap` | Maximum total assets the vault accepts | Owner |
-| Paused flag | Whether new deposits are blocked | Owner |
-| Owner | The admin address | Two-step transfer (current owner proposes, new owner accepts) |
-| Share balances | Who holds how many shares (the vault is itself an ERC-20) | Deposits, redemptions and ordinary share transfers |
-| Locked shares | 1,000 shares held by `0x000000000000000000000000000000000000dEaD` since the first deposit | Nobody. See [the defense](#the-defense-lock-the-first-1000-shares). |
-
-### Functions
-
-| Function | Who can call | What it does |
-|---|---|---|
-| `deposit(assets, receiver)` | Anyone, while not paused and under the cap | The caller pays; `receiver` (any address) gets the shares. |
-| `redeem(shares, receiver, owner)` | The share owner, or a spender holding enough share allowance from the owner. Always works, even when paused. | Burns the owner's shares and sends assets to `receiver`. `receiver` cannot be the zero address. |
-| `asset`, `totalAssets`, `convertToShares`, `convertToAssets` | Anyone (views) | Reads. |
-| `pause`, `unpause`, `setDepositCap` | Owner only | Controls new deposits only. |
-| `transferOwnership`, `acceptOwnership` | Owner proposes, new owner accepts | Two-step ownership change. |
-| `renounceOwnership` | Owner | Always reverts. Ownership can only move to a new owner. |
 
 ### Decisions
 
@@ -94,7 +75,7 @@ The first version of the vault priced the first deposit 1:1 and read the real to
 3. A victim deposits **5,000 USDC**. They get `5,000,000,000 × 1 // 2,500,000,001 = 1` share, because the division rounds down.
 4. The victim redeems their one share for **3,750 USDC** and lost **1,250 USDC**. The attacker redeems theirs for 3,750,000,001 base units. They spent 2,500,000,001 and made **+1,250 USDC**, exactly the victim's loss.
 
-The textbook version of the attack, with a 10,000 USDC donation, does *not* work against this vault, even before the defense: the victim would get 0 shares, and decision 4 makes that deposit revert, so the victim loses nothing. The attacker's best donation is the smaller one above, where the victim gets exactly 1 share.
+The textbook version of the attack, with a 10,000 USDC donation, does _not_ work against this vault, even before the defense: the victim would get 0 shares, and decision 4 makes that deposit revert, so the victim loses nothing. The attacker's best donation is the smaller one above, where the victim gets exactly 1 share.
 
 This test passed against the vault before the defense was added, with the results above. It is kept, commented out, at the bottom of `test/attack/InflationAttack.t.sol`, because it can no longer pass against the defended vault.
 
@@ -106,9 +87,9 @@ On the very first deposit, the vault mints **1,000 shares to `0x…dEaD`**, an a
 
 **What the tests show** (`test/attack/InflationAttack.t.sol`):
 
-| Test | Result |
-|---|---|
-| The original attack, `deposit(1)` | Reverts with `ZeroShares(1)`. The attack cannot start. |
+| Test                                                                                                       | Result                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The original attack, `deposit(1)`                                                                          | Reverts with `ZeroShares(1)`. The attack cannot start.                                                                                             |
 | The best adapted attack: deposit 1,001 base units (1 share), donate 2,500 USDC, victim deposits 5,000 USDC | The victim gets 2,001 shares and loses **832,111 base units (0.83 USDC)**. The attacker ends **2,497,502,667 base units (about 2,497 USDC) down**. |
 
 In a Python scan of attacker deposit sizes from 1,001 base units up to 100 million, and donations from 0 to 6,000 USDC, I found no combination where the attacker profits. That scan is not part of the test suite; only the two cases above are tested.
@@ -124,11 +105,13 @@ In a Python scan of attacker deposit sizes from 1,001 base units up to 100 milli
 The owner's power is exactly the list of `onlyOwner` functions. None of them moves tokens.
 
 **The owner can:**
+
 - pause and unpause new deposits
 - set the deposit cap
 - start a transfer of ownership (the new owner must accept it)
 
 **The owner cannot:**
+
 - withdraw, move, freeze or redirect user funds
 - block `redeem`, including while the vault is paused
 - change the asset
@@ -141,27 +124,12 @@ Tests for these claims: a non-owner cannot call `pause`, `unpause` or `setDeposi
 
 ## Tests
 
-52 tests, all passing: 11 in `VaultMath.t.sol` (10 unit, 1 fuzz), 39 in `Vault.t.sol` (unit, including the fee-on-transfer token tests) and 2 in `InflationAttack.t.sol`. `forge coverage` reports 100% of lines, branches and functions for `src/`.
-
-Coverage only shows that lines ran. The checks I made by deleting a line and seeing whether a test fails:
-
-| Line removed or changed | Does a test fail? |
-|---|---|
-| `_burn` in `redeem` | Yes |
-| The cap revert in `deposit` | Yes |
-| The `ZeroShares` revert | Yes |
-| `_spendAllowance` in `redeem` | Yes |
-| `whenNotPaused` on `deposit` | Yes |
-| Pricing shares from `assets` instead of the amount received | Yes (fee-token tests) |
-| `_mint(DEAD_ADDRESS, …)` | Yes (11 tests, including the adapted attack) |
-| `nonReentrant` on `redeem` | **No.** There is no reentrancy test yet. |
-| Cap check using `assets` instead of the amount received | **No.** No test combines a fee token with the cap. |
+`forge test` reports **59 passing tests**. Counting the test functions in the files gives 60: the difference is the invariant suite, which holds two invariants but is tallied as one result.
 
 ## Threat model
 
-- **Inflation / donation attack.** Defended by the locked shares; see above.
 - **Fee-on-transfer assets.** Shares are priced from the amount actually received. The `Withdraw` event and the return value of `redeem` report the amount sent, not what a fee token delivers to the receiver.
-- **Reentrancy.** `deposit` and `redeem` are `nonReentrant`, and `redeem` burns shares before it pays out. There is no test with a malicious token yet.
+- **Reentrancy.** `deposit` and `redeem` are `nonReentrant`, and `redeem` burns shares before it pays out. A malicious token that calls back during a deposit or a redeem is blocked in both cases (`Reentrancy.t.sol`).
 - **Owner key theft.** Limited to stopping deposits and changing the cap; see Owner powers.
 - **Share price manipulation by donation.** Anyone can donate tokens to the vault, which raises the price of every share. This is by design (it is how yield arrives), and it is the reason for the defense above.
 
@@ -175,8 +143,6 @@ Coverage only shows that lines ran. The checks I made by deleting a line and see
 - `Withdraw` and the return value of `redeem` report the amount sent, not the amount a fee-on-transfer token delivers.
 - Only `deposit` and `redeem` of the ERC-4626 mutating functions exist. `mint`, `withdraw`, `preview*` and `max*` are not implemented, so the vault is ERC-4626-style, not fully compliant.
 - Rounding dust: because conversions round down, a user can get back up to one base unit less than the exact value per operation.
-- Share name and symbol are set at deployment.
-- Still missing: vault-level fuzz and invariant tests, a reentrancy test, a deploy script and CI.
 
 ## License
 
